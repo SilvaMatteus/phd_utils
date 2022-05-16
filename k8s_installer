@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+
+# K8s Installer
+# Author: Matteus Silva <matteus.sthefano.ls@gmail.com>
+# MIT License
+
+
+set -o nounset
+set -o errexit
+# inherit traps
+set -o errtrace
+set -o pipefail
+
+umask 077
+
+
+BANNER=\
+"
+
+██╗  ██╗ █████╗ ███████╗
+██║ ██╔╝██╔══██╗██╔════╝
+█████╔╝ ╚█████╔╝███████╗ Installer
+██╔═██╗ ██╔══██╗╚════██║ v1.0.0
+██║  ██╗╚█████╔╝███████║
+╚═╝  ╚═╝ ╚════╝ ╚══════╝
+"
+
+function show_help {
+    printf '%s%s\n' "$BANNER" \
+"This program helps you to install the k8s master node components in a machine.
+
+The following options are supported:
+    -c, --container-runtime   container runtime: docker or containerd.
+    -v, --k8s-version         k8s version to be installed. 1.24+ versions only support containerd
+                              as container runtime for installation with this program.
+Flags:
+    -d, --delete              delete k8s components.
+    -r, --reset               reset k8s node (kubeadm reset).
+    -x,--verbose              set -x for a verbose output.
+    -h, --help                display this help and exit.
+"
+    exit 0
+}
+
+function parse_args {
+    OPTIONS="hc:v:drx"
+    LONGOPTS_STANDARD="help"
+    LONGOPTS_OPTIONAL="$(printf '%s' "container-runtime,k8s-version,")"
+    LONGOPTS="$(printf '%s' "$LONGOPTS_STANDARD"",""$LONGOPTS_OPTIONAL")"
+    ! PARSED="$(getopt --shell=bash --options="$OPTIONS" --longoptions="$LONGOPTS" --name "$0" -- "$@")"
+    [[ "${PIPESTATUS[0]}" -ne 0 ]] && exit 2
+    eval set -- "$PARSED"
+    while (( "$#" )); do
+        arg="$1"
+        case "$arg" in
+            -h|--help)
+                show_help
+                shift
+                ;;
+
+            -x|--verbose)
+                set -x
+                shift
+                ;;
+
+            -d|--delete)
+                export DELETE_MODE=1
+                shift
+                ;;
+
+            -r|--reset)
+                export RESET_MODE=1
+                shift
+                ;;
+
+            -c|--container-runtime)
+                export CONTAINER_RUNTIME="$2"
+                # todo: validate if is one of the supported container engines
+                shift 2
+                ;;
+
+            -v|--k8s-version)
+                export K8S_VERSION="$2"
+                shift 2
+                ;;
+
+            --)
+                shift
+                break
+                ;;
+
+            *) # preserve positional arguments
+                error_exit "unsupported command ""$1"
+                ;;
+        esac
+    done
+}
+
+
+function show_info {
+    [ $RESET_MODE -eq 1 ] && echo "It will run in RESET mode."
+    [ $DELETE_MODE -eq 1 ] && echo "It will run in DELETE mode."
+    read -p "Are you sure you want to continue? " -r
+    if [[ $REPLY =~ ^[Yy]$ ]]
+    then
+        return
+    else
+        echo "Cancelled"
+        exit 1
+    fi
+
+}
+
+function install_docker {
+    # remove old/defaults
+    apt-get remove docker docker-engine docker.io containerd runc || true
+    apt-get update
+    apt-get install -y \
+        apt-transport-https \
+        ca-certificates \
+        curl \
+        gnupg-agent \
+        software-properties-common
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+    add-apt-repository \
+        "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
+        $(lsb_release -cs) \
+        stable"
+    apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io
+    cat > /etc/docker/daemon.json <<EOF
+{
+"exec-opts": ["native.cgroupdriver=systemd"],
+"log-driver": "json-file",
+"log-opts": {
+    "max-size": "100m"
+},
+"storage-driver": "overlay2"
+}
+EOF
+    mkdir -p /etc/systemd/system/docker.service.d
+    systemctl daemon-reload
+    systemctl restart docker
+}
+
+function install_kubethings {
+    apt-get update && apt-get install -y apt-transport-https curl
+    curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+    cat <<EOF >/etc/apt/sources.list.d/kubernetes.list
+deb https://apt.kubernetes.io/ kubernetes-xenial main
+EOF
+    apt-get update
+    apt-get install -y kubelet="$K8S_VERSION" kubeadm="$K8S_VERSION" kubectl="$K8S_VERSION"
+    apt-mark hold kubelet kubeadm kubectl
+}
+
+function setup_k8s {
+    # init cluster w/ calico cidr parameters
+    kubeadm init --pod-network-cidr=192.168.0.0/16
+
+    # setup config for regular user
+    mkdir -p /home/$SUDO_USER/.kube
+    cp -i /etc/kubernetes/admin.conf /home/$SUDO_USER/.kube/config
+    chown -R $SUDO_USER /home/$SUDO_USER/.kube
+    chgrp -R $SUDO_USER /home/$SUDO_USER/.kube
+
+    # install calico
+    curl https://docs.projectcalico.org/manifests/calico.yaml -O
+    kubectl apply -f calico.yaml
+}
+
+# supported container engines
+DOCKER_ENGINE="docker"
+CONTAINERD_ENGINE="containerd"
+
+# set defaults
+DELETE_MODE=0
+RESET_MODE=0
+CONTAINER_RUNTIME="$DOCKER_ENGINE"
+K8S_VERSION="1.23.0-00"
+
+
+######################################################
+#                        MAIN                        #
+######################################################
+
+parse_args "$@"
+
+printf '%s' "$BANNER"
+
+show_info
+
+# todo: consider the other container engine
+if [ "$CONTAINER_RUNTIME" = "$DOCKER_ENGINE" ]; then
+    install_docker
+else
+    echo "Not implemented: use ""$DOCKER_ENGINE""engine."
+    exit 1
+fi
+
+install_kubethings
+
+setup_k8s
+
+echo "Installation completed. Run the following to untaint the master node:"
+echo "kubectl taint nodes --all node-role.kubernetes.io/master-"
