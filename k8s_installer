@@ -100,7 +100,7 @@ function parse_args {
 function show_info {
     [ $RESET_MODE -eq 1 ] && echo "It will run in RESET mode."
     [ $DELETE_MODE -eq 1 ] && echo "It will run in DELETE mode."
-    read -p "Are you sure you want to continue? " -r
+    read -p "Are you sure you want to continue? " -r REPLY
     if [[ $REPLY =~ ^[Yy]$ ]]
     then
         return
