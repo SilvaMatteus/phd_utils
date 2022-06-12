@@ -165,7 +165,7 @@ function setup_k8s {
 
     # install calico
     curl https://docs.projectcalico.org/manifests/calico.yaml -O
-    kubectl apply -f calico.yaml
+    kubectl apply -f calico.yaml --kubeconfig=/etc/kubernetes/admin.conf
 }
 
 # supported container engines
