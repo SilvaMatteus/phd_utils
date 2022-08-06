@@ -20,7 +20,7 @@ BANNER=\
 ██╗  ██╗ █████╗ ███████╗
 ██║ ██╔╝██╔══██╗██╔════╝
 █████╔╝ ╚█████╔╝███████╗ Installer
-██╔═██╗ ██╔══██╗╚════██║ v1.1.0
+██╔═██╗ ██╔══██╗╚════██║ v1.1.1
 ██║  ██╗╚█████╔╝███████║
 ╚═╝  ╚═╝ ╚════╝ ╚══════╝
 "
@@ -172,6 +172,10 @@ EOF
 }
 
 function setup_k8s {
+    # prevent [ERROR FileContent--proc-sys-net-ipv4-ip_forward]
+    modprobe br_netfilter
+    sysctl -w net.ipv4.ip_forward=1
+
     # init cluster w/ calico cidr parameters
     kubeadm init --pod-network-cidr=192.168.0.0/16
 
@@ -187,6 +191,7 @@ function setup_k8s {
 }
 
 function untaint_master_node {
+    sleep 10
     kubectl taint nodes --all node-role.kubernetes.io/master-
 }
 
