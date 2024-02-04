@@ -27,7 +27,7 @@ print(yd)
 
 csv_lines = []
 csv_lines.append("YEAR, COUNT\n")
-for key in yd.keys():
+for key in sorted(yd.keys()):
     csv_lines.append("{}, {}\n".format(key, yd[key]))
 
 with open('years_count.csv', 'w') as f:
